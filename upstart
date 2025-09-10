@@ -1,0 +1,566 @@
+// SolnsTech UpStart - Full Working Multi-Page React Prototype
+// ------------------------------------------------------------------
+// Instructions (quick):
+// 1) Create a new Vite React app:
+//    npx create-vite@latest solnstech-upstart --template react
+//    cd solnstech-upstart
+//    npm install
+//    npm install react-router-dom@6
+// 2) Install TailwindCSS (recommended) or keep simple CSS.
+//    (Tailwind guide: https://tailwindcss.com/docs/guides/vite)
+// 3) Replace src/App.jsx with this file and update src/main.jsx to import './index.css' if using Tailwind.
+// 4) Run: npm run dev
+// ------------------------------------------------------------------
+
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useParams } from 'react-router-dom'
+
+// -----------------------------
+// Simple CSS fallback (if Tailwind not set up)
+// You can remove when using Tailwind
+// -----------------------------
+const styles = `
+html,body,#root{height:100%}
+body{font-family:Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin:0}
+.a{box-sizing:border-box}
+.container{display:flex;min-height:100vh}
+.sidebar{width:260px;background:#f8fafc;padding:18px;border-right:1px solid #e6edf3}
+.topbar{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid #e6edf3;background:#fff}
+.main{flex:1;padding:18px;background:#f1f5f9}
+.card{background:#fff;padding:12px;border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,0.03);}
+.btn{background:#0ea5e9;color:#fff;padding:8px 12px;border-radius:6px;border:none;cursor:pointer}
+.link{color:#0ea5e9;text-decoration:none}
+.input{padding:8px;border:1px solid #e6edf3;border-radius:6px;width:100%}
+.grid{display:grid;gap:12px}
+.grid-cols-3{grid-template-columns:repeat(3,1fr)}
+.lead{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:6px;border:1px solid #edf2f7;background:#fff;margin-bottom:8px}
+.small{font-size:13px;color:#6b7280}
+`;
+
+// inject styles
+if (typeof document !== 'undefined'){
+  const s = document.createElement('style'); s.innerHTML = styles; document.head.appendChild(s)
+}
+
+// -----------------------------
+// LocalStorage helpers for persistence
+// -----------------------------
+const LS_KEYS = {
+  LEADS: 'upstart_leads_v1',
+  CANDIDATES: 'upstart_candidates_v1',
+  INVOICES: 'upstart_invoices_v1',
+  COURSES: 'upstart_courses_v1'
+}
+
+function readLS(key, fallback){
+  try{const v = localStorage.getItem(key); return v? JSON.parse(v): fallback}catch(e){return fallback}
+}
+function writeLS(key, data){ try{ localStorage.setItem(key, JSON.stringify(data)) }catch(e){} }
+
+// -----------------------------
+// Mocked agentic AI service (simple behaviors)
+// -----------------------------
+const agenticAI = {
+  summarize: async (text)=>{
+    await new Promise(r=>setTimeout(r,300))
+    return `AI Summary: ${text.slice(0,120)}${text.length>120? '...':''}`
+  },
+  mineLeads: async (query)=>{
+    await new Promise(r=>setTimeout(r,500))
+    return Array.from({length:6}).map((_,i)=>({
+      id: `L-${Date.now()}-${i}`,
+      name: `${query||'Lead'} ${i+1}`,
+      company: ['Acme','Beta','Gamma','Delta','Epsilon','Zeta'][i%6],
+      score: Math.round(40 + Math.random()*60),
+      status: 'new',
+      lastContact: null
+    }))
+  },
+  scheduleInterview: async ({candidate, datetime})=>{
+    await new Promise(r=>setTimeout(r,400))
+    return {success:true, message:`Interview scheduled with ${candidate.name} on ${datetime}`}
+  },
+  generateInvoice: async ({client, amount})=>{
+    await new Promise(r=>setTimeout(r,300))
+    return {id: `INV-${Date.now()}`, client, amount, date: new Date().toISOString().slice(0,10)}
+  }
+}
+
+// -----------------------------
+// App Context
+// -----------------------------
+const AppContext = createContext(null)
+function useApp(){ return useContext(AppContext) }
+
+function AppProvider({children}){
+  const [user] = useState({name:'Rishabh Mishra', role:'Admin'})
+  const [company] = useState({name:'SolnsTech LLP'})
+
+  // persisted entities
+  const [leads, setLeads] = useState(()=> readLS(LS_KEYS.LEADS, []))
+  const [candidates, setCandidates] = useState(()=> readLS(LS_KEYS.CANDIDATES, [
+    {id:'C1', name:'Anita Sharma', role:'Sales', experience:3},
+    {id:'C2', name:'Vikram Singh', role:'Developer', experience:5}
+  ]))
+  const [invoices, setInvoices] = useState(()=> readLS(LS_KEYS.INVOICES, []))
+  const [courses, setCourses] = useState(()=> readLS(LS_KEYS.COURSES, [
+    {id:'CR1', title:'Onboarding 101', duration:2},
+    {id:'CR2', title:'Sales Mastery', duration:4}
+  ]))
+
+  // persist on change
+  useEffect(()=> writeLS(LS_KEYS.LEADS, leads), [leads])
+  useEffect(()=> writeLS(LS_KEYS.CANDIDATES, candidates), [candidates])
+  useEffect(()=> writeLS(LS_KEYS.INVOICES, invoices), [invoices])
+  useEffect(()=> writeLS(LS_KEYS.COURSES, courses), [courses])
+
+  const api = useMemo(()=>({ agenticAI, async getMetrics(){
+    // simple aggregated metrics
+    return { revenue: invoices.reduce((s,i)=>s+Number(i.amount),0), mrr: Math.round(invoices.reduce((s,i)=>s+Number(i.amount),0)/12), activeUsers: 128, openLeads: leads.filter(l=> l.status!=='won').length }
+  }}), [leads, invoices])
+
+  return <AppContext.Provider value={{user, company, leads, setLeads, candidates, setCandidates, invoices, setInvoices, courses, setCourses, api}}>{children}</AppContext.Provider>
+}
+
+// -----------------------------
+// UI primitives
+// -----------------------------
+function Topbar(){
+  const {user, company} = useApp()
+  return (
+    <div className="topbar card">
+      <div>
+        <strong>{company.name}</strong> — UpStart
+        <div className="small">AI Business OS — Multi-app prototype</div>
+      </div>
+      <div style={{display:'flex',gap:10,alignItems:'center'}}>
+        <div className="small">{user.name}</div>
+        <div style={{width:36,height:36,borderRadius:18,background:'#cbd5e1',display:'flex',alignItems:'center',justifyContent:'center'}}>RM</div>
+      </div>
+    </div>
+  )
+}
+
+function Sidebar(){
+  const items = [
+    {to:'/',label:'Dashboard'},
+    {to:'/crm',label:'CRM'},
+    {to:'/hrm',label:'HRM'},
+    {to:'/erp',label:'ERP'},
+    {to:'/books',label:'Books'},
+    {to:'/dt',label:'DT'},
+    {to:'/lms',label:'LMS'},
+    {to:'/analytics',label:'Analytics'},
+    {to:'/settings',label:'Settings'}
+  ]
+  return (
+    <aside className="sidebar">
+      <div style={{marginBottom:12}}>
+        <h3>UpStart</h3>
+        <div className="small">Centralized business OS</div>
+      </div>
+      <nav style={{display:'flex',flexDirection:'column',gap:8}}>
+        {items.map(i=> <Link key={i.to} to={i.to} className="link">{i.label}</Link>)}
+      </nav>
+      <div style={{marginTop:18}} className="small">Tip: Click CRM → Mine Leads to create live leads.</div>
+    </aside>
+  )
+}
+
+function AIWidget({module}){
+  const {api} = useApp()
+  const [input,setInput] = useState('')
+  const [chat,setChat] = useState([])
+  const [loading, setLoading] = useState(false)
+
+  async function ask(){
+    if(!input) return
+    setLoading(true)
+    setChat(c=>[...c,{from:'user',text:input}])
+    const resp = await api.agenticAI.summarize(input)
+    setChat(c=>[...c, {from:'ai', text:resp}])
+    setInput('')
+    setLoading(false)
+  }
+
+  return (
+    <div className="card">
+      <div style={{fontWeight:600,marginBottom:8}}>AI — {module}</div>
+      <div style={{maxHeight:160,overflow:'auto',marginBottom:8}}>
+        {chat.map((m,idx)=> <div key={idx} style={{padding:6,marginBottom:6,background: m.from==='ai' ? '#f1f5f9' : '#e0f2fe', borderRadius:6}}>{m.text}</div>)}
+      </div>
+      <div style={{display:'flex',gap:8}}>
+        <input className="input" value={input} onChange={e=>setInput(e.target.value)} placeholder={`Ask AI to automate ${module}...`} />
+        <button className="btn" onClick={ask} disabled={loading}>{loading? '…':'Ask'}</button>
+      </div>
+    </div>
+  )
+}
+
+// -----------------------------
+// Pages: Dashboard
+// -----------------------------
+function Dashboard(){
+  const {api} = useApp()
+  const [metrics,setMetrics] = useState(null)
+
+  useEffect(()=>{ api.getMetrics().then(setMetrics) },[api])
+
+  return (
+    <div>
+      <h2>Dashboard</h2>
+      <div className="grid grid-cols-3" style={{marginTop:12}}>
+        <div className="card">Revenue<div style={{fontWeight:700,fontSize:18}}>₹{metrics? metrics.revenue: '0'}</div></div>
+        <div className="card">MRR<div style={{fontWeight:700,fontSize:18}}>₹{metrics? metrics.mrr: '0'}</div></div>
+        <div className="card">Active Users<div style={{fontWeight:700,fontSize:18}}>{metrics? metrics.activeUsers: '...'}</div></div>
+      </div>
+      <div style={{marginTop:12}} className="grid grid-cols-3">
+        <div className="card">Quick Actions
+          <div style={{marginTop:8}}>
+            <Link to="/crm" className="link">Open CRM</Link>
+          </div>
+        </div>
+        <AIWidget module="Dashboard" />
+        <div className="card">Tasks & Notifications</div>
+      </div>
+    </div>
+  )
+}
+
+// -----------------------------
+// CRM: Lead mining, lifecycle, detail
+// -----------------------------
+function CRM(){
+  const {leads, setLeads, api} = useApp()
+  const [query, setQuery] = useState('Product Manager')
+  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
+
+  async function mine(){
+    setLoading(true)
+    const res = await api.agenticAI.mineLeads(query)
+    // merge into leads
+    const merged = [...res, ...leads]
+    setLeads(merged)
+    setLoading(false)
+  }
+
+  function updateLead(id, patch){ setLeads(prev => prev.map(l=> l.id===id? {...l,...patch}: l)) }
+  function deleteLead(id){ setLeads(prev => prev.filter(l=> l.id!==id)) }
+
+  return (
+    <div>
+      <h2>CRM — Leads</h2>
+      <div style={{display:'flex',gap:8,marginTop:10}}>
+        <input className="input" value={query} onChange={e=>setQuery(e.target.value)} />
+        <button className="btn" onClick={mine} disabled={loading}>{loading? 'Mining…' : 'Mine Leads'}</button>
+      </div>
+
+      <div style={{marginTop:12}}>
+        {leads.length===0? <div className="card">No leads yet — try Mine Leads</div> : leads.map(l=> (
+          <div key={l.id} className="lead">
+            <div>
+              <div style={{fontWeight:600}}>{l.name}</div>
+              <div className="small">{l.company} • Status: {l.status || 'new'}</div>
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button className="btn" onClick={()=> navigate(`/crm/${l.id}`)}>Open</button>
+              <button className="btn" onClick={()=> updateLead(l.id,{status:'contacted'})}>Mark Contacted</button>
+              <button style={{background:'#ef4444'}} className="btn" onClick={()=> deleteLead(l.id)}>Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{marginTop:12}}>
+        <AIWidget module="CRM" />
+      </div>
+    </div>
+  )
+}
+
+function CRMDetail(){
+  const {id} = useParams(); const {leads, setLeads, api} = useApp()
+  const lead = leads.find(l=> l.id===id)
+  const [note, setNote] = useState('')
+
+  if(!lead) return <div className="card">Lead not found</div>
+
+  function saveNote(){ setLeads(prev => prev.map(l=> l.id===id? {...l, notes: [...(l.notes||[]), {text:note, date:new Date().toISOString()}]}: l)); setNote('') }
+
+  async function convertToInvoice(){ const inv = await api.agenticAI.generateInvoice({client: lead.name, amount: Math.round((lead.score||50)*100)}); setLeads(prev => prev.map(l=> l.id===id? {...l, status:'won'}: l)); return inv }
+
+  return (
+    <div>
+      <h2>Lead — {lead.name}</h2>
+      <div className="card" style={{marginTop:8}}>
+        <div><strong>Company:</strong> {lead.company}</div>
+        <div className="small">Score: {lead.score}</div>
+        <div style={{marginTop:8}}>
+          <button className="btn" onClick={async()=>{ const inv = await convertToInvoice(); alert('Generated invoice '+inv.id)}}>Convert to Invoice</button>
+        </div>
+      </div>
+
+      <div style={{marginTop:8}} className="card">
+        <div style={{fontWeight:600}}>Notes</div>
+        {(lead.notes||[]).map((n,idx)=> <div key={idx} style={{padding:6,borderBottom:'1px solid #edf2f7'}}>{n.text}<div className="small">{new Date(n.date).toLocaleString()}</div></div>)}
+        <div style={{display:'flex',gap:8,marginTop:8}}>
+          <input className="input" value={note} onChange={e=>setNote(e.target.value)} />
+          <button className="btn" onClick={saveNote}>Save</button>
+        </div>
+      </div>
+
+      <div style={{marginTop:8}}><AIWidget module={`CRM Lead ${lead.id}`} /></div>
+    </div>
+  )
+}
+
+// -----------------------------
+// HRM: Candidates, interviews, onboarding
+// -----------------------------
+function HRM(){
+  const {candidates, setCandidates} = useApp()
+  const navigate = useNavigate()
+  return (
+    <div>
+      <h2>HRM</h2>
+      <div style={{marginTop:8}}>
+        <Link to="/hrm/interviews" className="link">Interview Scheduler</Link>
+      </div>
+      <div style={{marginTop:12}}>
+        {candidates.map(c=> (
+          <div key={c.id} className="lead">
+            <div>
+              <div style={{fontWeight:600}}>{c.name}</div>
+              <div className="small">{c.role} • {c.experience} yrs</div>
+            </div>
+            <div>
+              <button className="btn" onClick={()=> navigate(`/hrm/candidate/${c.id}`)}>Open</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{marginTop:12}}><AIWidget module="HRM" /></div>
+    </div>
+  )
+}
+
+function HRMInterviews(){
+  const {candidates, setCandidates, api} = useApp()
+  const [selected, setSelected] = useState(candidates[0]?.id || '')
+  const [datetime, setDatetime] = useState('2025-09-15T10:00')
+  const [log, setLog] = useState([])
+
+  async function schedule(){
+    const cand = candidates.find(c=> c.id===selected)
+    const res = await api.agenticAI.scheduleInterview({candidate:cand, datetime})
+    setLog(prev=> [{time:new Date().toISOString(), msg:res.message}, ...prev])
+    // mark candidate as interviewed
+    setCandidates(prev=> prev.map(p=> p.id===selected? {...p, interview:{datetime, status:'scheduled'}}: p))
+  }
+
+  return (
+    <div>
+      <h2>Interview Scheduler</h2>
+      <div className="card" style={{marginTop:8}}>
+        <div style={{marginBottom:8}}>Select candidate and time</div>
+        <select className="input" value={selected} onChange={e=>setSelected(e.target.value)}>
+          {candidates.map(c=> <option key={c.id} value={c.id}>{c.name} — {c.role}</option>)}
+        </select>
+        <div style={{marginTop:8}}>
+          <input className="input" type="datetime-local" value={datetime} onChange={e=>setDatetime(e.target.value)} />
+        </div>
+        <div style={{marginTop:8}}>
+          <button className="btn" onClick={schedule}>Schedule Interview</button>
+        </div>
+      </div>
+
+      <div style={{marginTop:12}} className="card">
+        <div style={{fontWeight:600}}>Logs</div>
+        {log.map((l,idx)=> <div key={idx} style={{padding:6,borderBottom:'1px solid #edf2f7'}}>{l.msg}<div className="small">{new Date(l.time).toLocaleString()}</div></div>)}
+      </div>
+
+      <div style={{marginTop:12}}><AIWidget module="HRM Interviews" /></div>
+    </div>
+  )
+}
+
+function CandidateDetail(){
+  const {id} = useParams(); const {candidates, setCandidates} = useApp()
+  const c = candidates.find(x=> x.id===id)
+  if(!c) return <div className="card">Candidate not found</div>
+  return (
+    <div>
+      <h2>{c.name}</h2>
+      <div className="card" style={{marginTop:8}}>Role: {c.role}<br/>Experience: {c.experience} yrs</div>
+    </div>
+  )
+}
+
+// -----------------------------
+// Books / Invoicing
+// -----------------------------
+function Books(){
+  const {invoices, setInvoices} = useApp()
+  const [client, setClient] = useState('')
+  const [amount, setAmount] = useState('')
+
+  async function create(clientName, amt){
+    const inv = { id:`INV-${Date.now()}`, client: clientName, amount: Number(amt), date: new Date().toISOString().slice(0,10) }
+    setInvoices(prev=> [inv, ...prev])
+    alert('Invoice created: '+inv.id)
+  }
+
+  return (
+    <div>
+      <h2>Books & Invoices</h2>
+      <div className="card" style={{marginTop:8}}>
+        <div style={{marginBottom:8}}>Create Invoice</div>
+        <input className="input" placeholder="Client" value={client} onChange={e=>setClient(e.target.value)} />
+        <input className="input" placeholder="Amount" value={amount} onChange={e=>setAmount(e.target.value)} style={{marginTop:8}} />
+        <div style={{marginTop:8}}><button className="btn" onClick={()=> create(client, amount)}>Create</button></div>
+      </div>
+
+      <div style={{marginTop:12}}>
+        <h3>Recent Invoices</h3>
+        {invoices.map(inv=> <div key={inv.id} className="lead"><div>{inv.id} • {inv.client}</div><div>₹{inv.amount}</div></div>)}
+      </div>
+
+      <div style={{marginTop:12}}><AIWidget module="Books" /></div>
+    </div>
+  )
+}
+
+// -----------------------------
+// DT: Simple drag & drop site builder mock (very simplified)
+// -----------------------------
+function DT(){
+  const [blocks, setBlocks] = useState(()=> readLS('dt_blocks', [{id:'b1', type:'hero', content:'Welcome to SolnsTech'}]))
+  useEffect(()=> writeLS('dt_blocks', blocks), [blocks])
+
+  function addBlock(type){ setBlocks(prev=> [...prev, {id:`b${Date.now()}`, type, content: type==='text'? 'Edit me':'New section'}]) }
+  function updateBlock(id, content){ setBlocks(prev=> prev.map(b=> b.id===id? {...b, content}: b)) }
+
+  return (
+    <div>
+      <h2>Digital Transformation — Site Builder</h2>
+      <div className="card" style={{marginTop:8}}>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn" onClick={()=>addBlock('hero')}>Add Hero</button>
+          <button className="btn" onClick={()=>addBlock('text')}>Add Text</button>
+        </div>
+      </div>
+      <div style={{marginTop:12}}>
+        <h3>Preview</h3>
+        <div className="card">
+          {blocks.map(b=> (
+            <div key={b.id} style={{padding:12,border:'1px dashed #e6edf3',marginBottom:8}}>
+              <div style={{fontWeight:700}}>{b.type.toUpperCase()}</div>
+              <textarea className="input" value={b.content} onChange={e=>updateBlock(b.id,e.target.value)} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{marginTop:12}}><AIWidget module="DT Site Builder" /></div>
+    </div>
+  )
+}
+
+// -----------------------------
+// LMS
+// -----------------------------
+function LMS(){
+  const {courses, setCourses} = useApp()
+  const [title, setTitle] = useState('')
+  function add(){ setCourses(prev=> [...prev, {id:`CR-${Date.now()}`, title, duration:1}]); setTitle('') }
+  return (
+    <div>
+      <h2>LMS</h2>
+      <div className="card" style={{marginTop:8}}>
+        <input className="input" placeholder="Course title" value={title} onChange={e=>setTitle(e.target.value)} />
+        <div style={{marginTop:8}}><button className="btn" onClick={add}>Add Course</button></div>
+      </div>
+      <div style={{marginTop:12}}>
+        {courses.map(c=> <div key={c.id} className="lead"><div>{c.title}</div><div className="small">{c.duration} hrs</div></div>)}
+      </div>
+      <div style={{marginTop:12}}><AIWidget module="LMS" /></div>
+    </div>
+  )
+}
+
+// -----------------------------
+// Analytics (very simple charts using div widths)
+// -----------------------------
+function Analytics(){
+  const {invoices, leads} = useApp()
+  const revenue = invoices.reduce((s,i)=> s + Number(i.amount),0)
+  const openLeads = leads.filter(l=> l.status!=='won').length
+
+  return (
+    <div>
+      <h2>Analytics</h2>
+      <div style={{display:'flex',gap:12,marginTop:8}}>
+        <div className="card" style={{flex:1}}>
+          <div style={{fontWeight:700}}>Revenue</div>
+          <div style={{height:24,background:'#e6edf3',borderRadius:6,marginTop:8}}><div style={{height:24,width: `${Math.min(100, revenue/1000)}%`,background:'#0ea5e9',borderRadius:6}} /></div>
+          <div className="small">₹{revenue}</div>
+        </div>
+        <div className="card" style={{width:220}}>
+          <div style={{fontWeight:700}}>Open Leads</div>
+          <div style={{fontSize:28,fontWeight:700,marginTop:8}}>{openLeads}</div>
+        </div>
+      </div>
+      <div style={{marginTop:12}}><AIWidget module="Analytics" /></div>
+    </div>
+  )
+}
+
+function Settings(){ return <div><h2>Settings</h2><div className="card">API keys, Integrations, Users (mock)</div></div> }
+
+// -----------------------------
+// App Shell + Routes
+// -----------------------------
+function Shell(){
+  return (
+    <div className="container">
+      <Sidebar />
+      <div style={{flex:1,display:'flex',flexDirection:'column'}}>
+        <Topbar />
+        <div className="main">
+          <Routes>
+            <Route path="/" element={<Dashboard/>} />
+            <Route path="/crm" element={<CRM/>} />
+            <Route path="/crm/:id" element={<CRMDetail/>} />
+            <Route path="/hrm" element={<HRM/>} />
+            <Route path="/hrm/interviews" element={<HRMInterviews/>} />
+            <Route path="/hrm/candidate/:id" element={<CandidateDetail/>} />
+            <Route path="/erp" element={<div><h2>ERP</h2><div className="card">Inventory, Orders (mock)</div></div>} />
+            <Route path="/books" element={<Books/>} />
+            <Route path="/dt" element={<DT/>} />
+            <Route path="/lms" element={<LMS/>} />
+            <Route path="/analytics" element={<Analytics/>} />
+            <Route path="/settings" element={<Settings/>} />
+            <Route path="*" element={<div>Page not found</div>} />
+          </Routes>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function App(){
+  return (
+    <Router>
+      <AppProvider>
+        <Shell />
+      </AppProvider>
+    </Router>
+  )
+}
+
+// ------------------------------------------------------------------
+// Notes / Next steps:
+// - This is a fully client-side working prototype. Data persists in localStorage.
+// - Next: wire real backend (Node/Firebase), authentication, role-based access, and connect to real AI APIs for agentic behaviors.
+// - If you want, I can now split this into modular files, add Tailwind config, and prepare a deployable repo (Netlify/Vercel).
+// ------------------------------------------------------------------
